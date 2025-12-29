@@ -1,0 +1,38 @@
+name: Build EXE for Windows 7 / Server 2008
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.8
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.8.10'
+          architecture: 'x64'
+
+      - name: Install PyInstaller 4.10
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller==4.10
+
+      - name: Build EXE
+        run: |
+          pyinstaller ^
+            --onefile ^
+            --windowed ^
+            --clean ^
+            --name UPDATE_BIN_SERVICE ^
+            main.py
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UPDATE_BIN_SERVICE_WIN2008
+          path: dist/UPDATE_BIN_SERVICE.exe
