@@ -1,6 +1,7 @@
 import os
 import shutil
 import tkinter as tk
+from datetime import datetime
 from tkinter import filedialog, messagebox
 
 
@@ -19,34 +20,60 @@ def tim_tat_ca_thu_muc_theo_ten(thu_muc_goc, ten_bat_dau):
     return ket_qua
 
 
+def sao_luu_thu_muc_bin(bin_thu_muc, moc_thoi_gian):
+    """
+    Sao lưu thư mục bin hiện tại sang thư mục bin_backup_<thời gian>
+    nằm cạnh nó, trả về đường dẫn bản sao lưu.
+    """
+    thu_muc_cha = os.path.dirname(bin_thu_muc)
+    backup_path = os.path.join(thu_muc_cha, f"bin_backup_{moc_thoi_gian}")
+    shutil.copytree(bin_thu_muc, backup_path)
+    return backup_path
+
+
 def ghi_de_thu_muc(bin_goc, danh_sach_thu_muc):
     """
     Ghi đè nội dung từ bin_goc vào các thư mục bin trong danh sách thư mục đã tìm được.
+
+    Trước khi ghi đè, mỗi thư mục bin cũ được sao lưu lại. Nếu một thư mục gặp lỗi,
+    hàm ghi nhận lỗi và tiếp tục với các thư mục còn lại thay vì dừng giữa chừng.
+
+    Trả về (danh_sach_thanh_cong, danh_sach_loi) trong đó mỗi phần tử lỗi là
+    một tuple (đường_dẫn_bin, thông_báo_lỗi).
     """
-    ket_qua = []
+    moc_thoi_gian = datetime.now().strftime("%Y%m%d_%H%M%S")
+    thanh_cong = []
+    loi = []
+
     for thu_muc in danh_sach_thu_muc:
         bin_thu_muc = os.path.join(thu_muc, "bin")
 
-        # Xóa nội dung cũ trong thư mục bin
-        for item in os.listdir(bin_thu_muc):
-            item_path = os.path.join(bin_thu_muc, item)
-            if os.path.isfile(item_path) or os.path.islink(item_path):
-                os.unlink(item_path)
-            elif os.path.isdir(item_path):
-                shutil.rmtree(item_path)
+        try:
+            # Sao lưu thư mục bin cũ trước khi thay đổi
+            sao_luu_thu_muc_bin(bin_thu_muc, moc_thoi_gian)
 
-        # Sao chép nội dung từ bin_goc vào bin
-        for item in os.listdir(bin_goc):
-            src_path = os.path.join(bin_goc, item)
-            dst_path = os.path.join(bin_thu_muc, item)
-            if os.path.isdir(src_path):
-                shutil.copytree(src_path, dst_path)
-            else:
-                shutil.copy2(src_path, dst_path)
+            # Xóa nội dung cũ trong thư mục bin
+            for item in os.listdir(bin_thu_muc):
+                item_path = os.path.join(bin_thu_muc, item)
+                if os.path.isfile(item_path) or os.path.islink(item_path):
+                    os.unlink(item_path)
+                elif os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
 
-        ket_qua.append(bin_thu_muc)
+            # Sao chép nội dung từ bin_goc vào bin
+            for item in os.listdir(bin_goc):
+                src_path = os.path.join(bin_goc, item)
+                dst_path = os.path.join(bin_thu_muc, item)
+                if os.path.isdir(src_path):
+                    shutil.copytree(src_path, dst_path)
+                else:
+                    shutil.copy2(src_path, dst_path)
 
-    return ket_qua
+            thanh_cong.append(bin_thu_muc)
+        except Exception as e:
+            loi.append((bin_thu_muc, str(e)))
+
+    return thanh_cong, loi
 
 
 def chon_thu_muc(entry_field):
@@ -100,8 +127,28 @@ def thuc_hien_ghi_de():
         messagebox.showinfo("Kết quả", "Không tìm thấy thư mục nào phù hợp.")
         return
 
-    ket_qua = ghi_de_thu_muc(bin_goc, danh_sach_thu_muc)
-    messagebox.showinfo("Hoàn tất", f"Đã ghi đè vào {len(ket_qua)} thư mục.\n\n{chr(10).join(ket_qua)}")
+    # Xác nhận trước khi ghi đè (thao tác xóa nội dung bin cũ)
+    xac_nhan = messagebox.askyesno(
+        "Xác nhận ghi đè",
+        f"Sẽ ghi đè thư mục 'bin' của {len(danh_sach_thu_muc)} thư mục.\n"
+        f"Nội dung bin cũ được sao lưu vào 'bin_backup_<thời gian>' cạnh mỗi thư mục.\n\n"
+        f"Bạn có chắc chắn muốn tiếp tục?",
+    )
+    if not xac_nhan:
+        return
+
+    thanh_cong, loi = ghi_de_thu_muc(bin_goc, danh_sach_thu_muc)
+
+    thong_bao = f"Đã ghi đè thành công {len(thanh_cong)} thư mục."
+    if thanh_cong:
+        thong_bao += "\n\n" + "\n".join(thanh_cong)
+
+    if loi:
+        chi_tiet_loi = "\n".join(f"- {bin_path}: {msg}" for bin_path, msg in loi)
+        thong_bao += f"\n\n{len(loi)} thư mục gặp lỗi:\n{chi_tiet_loi}"
+        messagebox.showwarning("Hoàn tất (có lỗi)", thong_bao)
+    else:
+        messagebox.showinfo("Hoàn tất", thong_bao)
 
 
 # Tạo giao diện Tkinter
