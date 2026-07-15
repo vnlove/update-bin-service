@@ -24,7 +24,7 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --clean --name UPDATE_BIN_SERVICE main.py
+          pyinstaller --onefile --windowed --clean --name UPDATE_BIN_SERVICE Main.py
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
