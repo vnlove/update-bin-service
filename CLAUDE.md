@@ -16,6 +16,8 @@ Công cụ GUI (Tkinter) cập nhật hàng loạt thư mục `bin` của các s
 
 ## Nghiệp vụ
 - ACCService và WarehouseService dùng CHUNG một bộ bin → chạy chung 1 lần với cùng bin_goc (VD: `ACCService;WarehouseService`).
+- Chế độ sao lưu mặc định "Xóa backup khi OK, lỗi thì giữ": vẫn tự khôi phục được khi lỗi,
+  ổ đĩa chỉ tốn thêm 1 bộ bin tại một thời điểm (quan trọng khi chạy ~1000 thư mục).
 - So khớp tên không phân biệt hoa thường → không cần nhập cả `WarehouseService` lẫn `Warehouseservice`.
 
 ## Luồng xử lý
@@ -27,8 +29,11 @@ Chọn bin_goc + NHIỀU thư mục gốc + tên bắt đầu (nhiều tên, cá
       không đi vào bin/ và bin_backup_*  → hiện kết quả trực tiếp vào bảng
   → Bảng kết quả (bỏ bớt dòng được)
   → [2. Thực hiện ghi đè] → xác nhận → (luồng nền, tuần tự từng thư mục)
-      Sao lưu bin → bin_backup_<YYYYmmdd_HHMMSS>   (lỗi: bin chưa bị đụng)
-      Xóa bin cũ → Copy bin_goc                    (lỗi: tự khôi phục từ backup)
+      [Sao lưu bin → bin_backup_<YYYYmmdd_HHMMSS>] (lỗi: bin chưa bị đụng)
+      Xóa bin cũ → Copy bin_goc                    (lỗi: tự khôi phục từ backup, GIỮ backup)
+      OK → xử lý backup theo chế độ:
+         xoa_khi_ok (mặc định) : xóa backup        | giu_tat_ca : giữ lại
+         khong                 : không sao lưu, lỗi giữa chừng KHÔNG khôi phục (hỏi xác nhận 2 lần)
       Bảng: trạng thái từng dòng | Progress Tổng + Hiện tại | Nhật ký + file log
   → [Dừng]: quét dừng ngay; ghi đè dừng sau thư mục đang chạy (không để bin dở dang)
 ```
@@ -54,3 +59,4 @@ Chọn bin_goc + NHIỀU thư mục gốc + tên bắt đầu (nhiều tên, cá
 - PR #1: thêm backup, xác nhận, xử lý lỗi khi ghi đè; thêm `.gitignore`.
 - Nhiều thư mục gốc quét song song; ghi đè chạy nền có tiến trình/nhật ký/log file;
   tự khôi phục khi lỗi; nút Dừng; nhớ cấu hình; build tương thích 2008 R2 → 2022.
+- Tuỳ chọn chế độ sao lưu (xóa khi OK / giữ tất cả / không sao lưu), lưu vào cấu hình.

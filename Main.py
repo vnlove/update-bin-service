@@ -31,6 +31,16 @@ CHU_KY_CAP_NHAT_GUI_MS = 100         # chu kỳ giao diện đọc hàng đợi 
 CHU_KY_BAO_TIEN_DO_GIAY = 0.15       # giới hạn tần suất gửi tiến độ từ luồng nền
 TEN_FILE_CAU_HINH = "update_bin_config.json"
 
+# Chế độ sao lưu khi ghi đè
+BACKUP_XOA_KHI_OK = "xoa_khi_ok"      # sao lưu -> thành công thì xóa, lỗi thì giữ (mặc định)
+BACKUP_GIU_TAT_CA = "giu_tat_ca"      # giữ lại mọi bản sao lưu
+BACKUP_KHONG = "khong"                # không sao lưu: nhanh, nhưng lỗi giữa chừng KHÔNG khôi phục được
+CAC_CHE_DO_BACKUP = [
+    (BACKUP_XOA_KHI_OK, "Xóa backup khi OK, lỗi thì giữ (khuyên dùng)"),
+    (BACKUP_GIU_TAT_CA, "Giữ tất cả backup"),
+    (BACKUP_KHONG, "Không sao lưu (rủi ro)"),
+]
+
 
 class DaHuy(Exception):
     """Người dùng bấm Dừng."""
@@ -273,22 +283,28 @@ def khoi_phuc_tu_backup(backup, bin_dich):
     return sao_chep_noi_dung(backup, bin_dich, bo_qua_loi=True)
 
 
-def ghi_de_mot_thu_muc(bin_goc, thu_muc_cha, moc_thoi_gian, tong_file_moi, bao_cao_buoc):
+def ghi_de_mot_thu_muc(bin_goc, thu_muc_cha, moc_thoi_gian, tong_file_moi, bao_cao_buoc,
+                       che_do_backup=BACKUP_XOA_KHI_OK):
     """
-    Sao lưu -> xóa bin cũ -> copy từ bin_goc. Lỗi sau khi đã sao lưu thì tự khôi phục.
-    bao_cao_buoc(ten_buoc, da_xong, tong). Trả về đường dẫn bản sao lưu.
+    [Sao lưu] -> xóa bin cũ -> copy từ bin_goc -> [xóa bản sao lưu nếu chế độ xoa_khi_ok].
+    Lỗi giữa chừng: có sao lưu thì tự khôi phục và GIỮ bản sao lưu; không sao lưu thì báo lỗi.
+    bao_cao_buoc(ten_buoc, da_xong, tong). Trả về chuỗi mô tả kết quả về bản sao lưu.
     """
     bin_dich = os.path.join(thu_muc_cha, TEN_BIN)
     if nam_trong(bin_goc, bin_dich) or nam_trong(bin_dich, bin_goc):
         raise LoiGhiDe("Bỏ qua: trùng/lồng với thư mục bin_goc.")
 
     # 1. Sao lưu
-    backup = tao_duong_dan_backup(thu_muc_cha, moc_thoi_gian)
-    try:
-        sao_chep_noi_dung(bin_dich, backup,
-                          BoDemTienDo(lambda a, b: bao_cao_buoc("Sao lưu", a, b), dem_file(bin_dich)))
-    except Exception as e:
-        raise LoiGhiDe("Sao lưu thất bại, bin CHƯA bị thay đổi: {}".format(e))
+    backup = None
+    if che_do_backup != BACKUP_KHONG:
+        backup = tao_duong_dan_backup(thu_muc_cha, moc_thoi_gian)
+        try:
+            sao_chep_noi_dung(bin_dich, backup,
+                              BoDemTienDo(lambda a, b: bao_cao_buoc("Sao lưu", a, b), dem_file(bin_dich)))
+        except Exception as e:
+            # Dọn bản sao lưu dở dang, bin chưa bị đụng tới
+            shutil.rmtree(backup, ignore_errors=True)
+            raise LoiGhiDe("Sao lưu thất bại, bin CHƯA bị thay đổi: {}".format(e))
 
     # 2 + 3. Xóa bin cũ và copy bin mới
     try:
@@ -297,31 +313,46 @@ def ghi_de_mot_thu_muc(bin_goc, thu_muc_cha, moc_thoi_gian, tong_file_moi, bao_c
         sao_chep_noi_dung(bin_goc, bin_dich,
                           BoDemTienDo(lambda a, b: bao_cao_buoc("Copy", a, b), tong_file_moi))
     except Exception as e:
+        if backup is None:
+            raise LoiGhiDe("{} → KHÔNG có sao lưu, bin có thể đang DỞ DANG, cần kiểm tra tay!".format(e))
         bao_cao_buoc("Khôi phục", 0, 0)
         so_loi = khoi_phuc_tu_backup(backup, bin_dich)
         if so_loi == 0:
-            raise LoiGhiDe("{} → ĐÃ KHÔI PHỤC bin cũ từ backup.".format(e))
+            raise LoiGhiDe("{} → ĐÃ KHÔI PHỤC bin cũ, giữ backup: {}".format(
+                e, os.path.basename(backup)))
         raise LoiGhiDe("{} → khôi phục KHÔNG trọn vẹn ({} file lỗi), kiểm tra tay: {}".format(
             e, so_loi, backup))
-    return backup
+
+    # 4. Thành công
+    if backup is None:
+        return "không sao lưu"
+    if che_do_backup == BACKUP_XOA_KHI_OK:
+        bao_cao_buoc("Xóa backup", 0, 0)
+        try:
+            shutil.rmtree(backup, onerror=_bo_chi_doc)
+            return "đã xóa backup"
+        except Exception as e:
+            return "KHÔNG xóa được backup {} ({})".format(os.path.basename(backup), e)
+    return "Backup: {}".format(os.path.basename(backup))
 
 
-def chay_ghi_de(bin_goc, ds_thu_muc, su_kien_huy, bao_cao):
+def chay_ghi_de(bin_goc, ds_thu_muc, che_do_backup, su_kien_huy, bao_cao):
     moc = datetime.now().strftime("%Y%m%d_%H%M%S")
     tong_file_moi = dem_file(bin_goc)
-    bao_cao("log", "INFO", "Bắt đầu ghi đè {} thư mục từ {} ({} file).".format(
-        len(ds_thu_muc), bin_goc, tong_file_moi))
+    bao_cao("log", "INFO", "Bắt đầu ghi đè {} thư mục từ {} ({} file). Chế độ sao lưu: {}".format(
+        len(ds_thu_muc), bin_goc, tong_file_moi, dict(CAC_CHE_DO_BACKUP)[che_do_backup]))
     thanh_cong = loi = 0
     for i, thu_muc in enumerate(ds_thu_muc):
         if su_kien_huy.is_set():
             break
         bao_cao("bat_dau", i, thu_muc)
         try:
-            backup = ghi_de_mot_thu_muc(
+            ket_qua_backup = ghi_de_mot_thu_muc(
                 bin_goc, thu_muc, moc, tong_file_moi,
-                lambda buoc, a, b, i=i: bao_cao("buoc", i, buoc, a, b))
+                lambda buoc, a, b, i=i: bao_cao("buoc", i, buoc, a, b),
+                che_do_backup)
             thanh_cong += 1
-            bao_cao("xong", i, True, "Backup: {}".format(os.path.basename(backup)))
+            bao_cao("xong", i, True, ket_qua_backup)
         except Exception as e:
             loi += 1
             bao_cao("xong", i, False, str(e))
@@ -424,9 +455,20 @@ class UngDung:
         self.entry_ten_bat_dau.grid(row=1, column=0, columnspan=2, sticky="ew")
         self.entry_ten_bat_dau.bind("<Return>", lambda _e: self.tim_kiem())
 
+        # --- Chế độ sao lưu
+        f_bk = ttk.Frame(khung)
+        f_bk.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        ttk.Label(f_bk, text="Sao lưu bin cũ:").grid(row=0, column=0, sticky="w", padx=(0, 5))
+        self.bien_che_do_backup = tk.StringVar(value=BACKUP_XOA_KHI_OK)
+        self.nut_backup = []
+        for cot, (gia_tri, nhan) in enumerate(CAC_CHE_DO_BACKUP, start=1):
+            rb = ttk.Radiobutton(f_bk, text=nhan, value=gia_tri, variable=self.bien_che_do_backup)
+            rb.grid(row=0, column=cot, sticky="w", padx=(0, 12))
+            self.nut_backup.append(rb)
+
         # --- Nút chức năng
         f_nut = ttk.Frame(khung)
-        f_nut.grid(row=3, column=0, pady=8)
+        f_nut.grid(row=10, column=0, pady=8)
         self.btn_tim = ttk.Button(f_nut, text="1. Tìm kiếm", width=18, command=self.tim_kiem)
         self.btn_ghi_de = ttk.Button(f_nut, text="2. Thực hiện ghi đè", width=20, command=self.ghi_de)
         self.btn_dung = ttk.Button(f_nut, text="Dừng", width=10, command=self.dung, state="disabled")
@@ -436,10 +478,10 @@ class UngDung:
 
         # --- Danh sách kết quả
         f_kq = ttk.LabelFrame(khung, text="Danh sách thư mục service", padding=6)
-        f_kq.grid(row=4, column=0, sticky="nsew")
+        f_kq.grid(row=11, column=0, sticky="nsew")
         f_kq.columnconfigure(0, weight=1)
         f_kq.rowconfigure(0, weight=1)
-        khung.rowconfigure(4, weight=3)
+        khung.rowconfigure(11, weight=3)
 
         self.tree = ttk.Treeview(f_kq, columns=("stt", "duong_dan", "trang_thai"),
                                  show="headings", height=7, selectmode="extended")
@@ -471,7 +513,7 @@ class UngDung:
 
         # --- Tiến trình
         f_td = ttk.LabelFrame(khung, text="Tiến trình", padding=6)
-        f_td.grid(row=5, column=0, sticky="ew", pady=(6, 0))
+        f_td.grid(row=12, column=0, sticky="ew", pady=(6, 0))
         f_td.columnconfigure(1, weight=1)
         self.lbl_trang_thai = ttk.Label(f_td, text="Sẵn sàng.")
         self.lbl_trang_thai.grid(row=0, column=0, columnspan=3, sticky="w")
@@ -490,10 +532,10 @@ class UngDung:
 
         # --- Nhật ký
         f_log = ttk.LabelFrame(khung, text="Nhật ký", padding=6)
-        f_log.grid(row=6, column=0, sticky="nsew", pady=(6, 0))
+        f_log.grid(row=13, column=0, sticky="nsew", pady=(6, 0))
         f_log.columnconfigure(0, weight=1)
         f_log.rowconfigure(0, weight=1)
-        khung.rowconfigure(6, weight=2)
+        khung.rowconfigure(13, weight=2)
         self.txt_log = tk.Text(f_log, height=5, wrap="none", state="disabled")
         self.txt_log.grid(row=0, column=0, sticky="nsew")
         sb_log = ttk.Scrollbar(f_log, orient="vertical", command=self.txt_log.yview)
@@ -512,12 +554,15 @@ class UngDung:
         self.entry_ten_bat_dau.insert(0, ch.get("ten_bat_dau", ""))
         for p in ch.get("thu_muc_goc", []):
             self.lb_goc.insert("end", p)
+        if ch.get("che_do_backup") in dict(CAC_CHE_DO_BACKUP):
+            self.bien_che_do_backup.set(ch["che_do_backup"])
 
     def _luu_cau_hinh(self):
         ghi_cau_hinh({
             "bin_goc": self.entry_bin_goc.get().strip(),
             "ten_bat_dau": self.entry_ten_bat_dau.get().strip(),
             "thu_muc_goc": list(self.lb_goc.get(0, "end")),
+            "che_do_backup": self.bien_che_do_backup.get(),
         })
 
     # ------------------------------------------------- thư mục gốc
@@ -640,18 +685,19 @@ class UngDung:
         self.dang_chay = loai
         self.su_kien_huy.clear()
         self.thoi_diem_bat_dau = time.monotonic()
-        for w in [self.btn_tim, self.btn_ghi_de, self.btn_bo_dong] + self.nut_goc:
+        for w in [self.btn_tim, self.btn_ghi_de, self.btn_bo_dong] + self.nut_goc + self.nut_backup:
             w.configure(state="disabled")
         self.btn_dung.configure(state="normal")
         self._luu_cau_hinh()
 
     def _ket_thuc_chay(self):
         self.dang_chay = None
-        for w in [self.btn_tim, self.btn_ghi_de, self.btn_bo_dong] + self.nut_goc:
+        for w in [self.btn_tim, self.btn_ghi_de, self.btn_bo_dong] + self.nut_goc + self.nut_backup:
             w.configure(state="normal")
         self.btn_dung.configure(state="disabled")
-        self.pb_tong.stop()
-        self.pb_tong.configure(mode="determinate")
+        if str(self.pb_tong.cget("mode")) == "indeterminate":
+            self.pb_tong.stop()
+            self.pb_tong.configure(mode="determinate", value=0)
         if self.dong_khi_xong:
             self._dong()
 
@@ -738,14 +784,26 @@ class UngDung:
             messagebox.showinfo("Chưa có danh sách", "Hãy bấm '1. Tìm kiếm' trước khi ghi đè.")
             return
         so_file = dem_file(bin_goc)
+        che_do = self.bien_che_do_backup.get()
         canh_bao_rong = "\n\nCẢNH BÁO: bin_goc đang RỖNG (0 file)!" if so_file == 0 else ""
+        mo_ta_backup = {
+            BACKUP_XOA_KHI_OK: "Bin cũ được sao lưu tạm; thư mục chạy OK sẽ tự xóa bản sao lưu, "
+                               "thư mục lỗi được tự khôi phục và GIỮ bản sao lưu.",
+            BACKUP_GIU_TAT_CA: "Bin cũ được sao lưu vào 'bin_backup_<thời gian>' cạnh mỗi thư mục "
+                               "và giữ lại tất cả; lỗi giữa chừng sẽ tự khôi phục.",
+            BACKUP_KHONG: "KHÔNG sao lưu: nếu lỗi giữa chừng (VD: file .dll đang bị service khóa) "
+                          "thì bin sẽ DỞ DANG và KHÔNG tự khôi phục được.",
+        }[che_do]
         if not messagebox.askyesno(
                 "Xác nhận ghi đè",
-                "Sẽ ghi đè thư mục 'bin' của {} thư mục bằng {} file từ:\n{}\n\n"
-                "Bin cũ được sao lưu vào 'bin_backup_<thời gian>' cạnh mỗi thư mục; "
-                "lỗi giữa chừng sẽ tự khôi phục.{}\n\nTiếp tục?".format(
-                    len(self.ds_ket_qua), so_file, bin_goc, canh_bao_rong),
+                "Sẽ ghi đè thư mục 'bin' của {} thư mục bằng {} file từ:\n{}\n\n{}{}\n\nTiếp tục?".format(
+                    len(self.ds_ket_qua), so_file, bin_goc, mo_ta_backup, canh_bao_rong),
                 icon="warning"):
+            return
+        if che_do == BACKUP_KHONG and not messagebox.askyesno(
+                "Xác nhận lần 2 - KHÔNG sao lưu",
+                "Chế độ KHÔNG sao lưu chỉ nên dùng khi đã DỪNG hết service.\n\n"
+                "Chắc chắn chạy không sao lưu?", icon="warning", default="no"):
             return
 
         self._ve_lai_danh_sach()
@@ -754,7 +812,7 @@ class UngDung:
         self.pb_tong.configure(mode="determinate", maximum=self.tong_ghi_de, value=0)
         self.pb_hien_tai.configure(maximum=1, value=0)
         self.lbl_pt_tong.configure(text="0/{}".format(self.tong_ghi_de))
-        self._chay_nen(chay_ghi_de, bin_goc, list(self.ds_ket_qua))
+        self._chay_nen(chay_ghi_de, bin_goc, list(self.ds_ket_qua), che_do)
 
     # ------------------------------------------------- xử lý hàng đợi
     def _xu_ly_hang_doi(self):
@@ -831,7 +889,7 @@ class UngDung:
             self.lbl_pt_hien_tai.configure(text="{}%".format(int(ti_le * 100)))
             # Tổng: sao lưu ~40%, xóa ~10%, copy ~50% thời gian của một thư mục
             phan = {"Sao lưu": 0.4 * ti_le, "Xóa bin cũ": 0.45,
-                    "Copy": 0.5 + 0.5 * ti_le}.get(buoc, 0.95)
+                    "Copy": 0.5 + 0.5 * ti_le, "Xóa backup": 0.97}.get(buoc, 0.95)
             self.pb_tong.configure(value=i + phan)
 
         elif loai == "xong":
@@ -841,6 +899,7 @@ class UngDung:
             self.pb_tong.configure(value=i + 1)
             self.lbl_pt_tong.configure(text="{}/{}".format(i + 1, self.tong_ghi_de))
             self.pb_hien_tai.configure(value=1 if ok else 0)
+            self.lbl_pt_hien_tai.configure(text="100%" if ok else "")
             self.ghi_log("OK" if ok else "LOI", "{} | {}".format(
                 os.path.join(self.ds_ket_qua[i], TEN_BIN), thong_bao))
 
