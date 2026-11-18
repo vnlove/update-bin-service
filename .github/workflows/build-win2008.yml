@@ -1,4 +1,7 @@
-name: Build EXE for Windows 7 / Server 2008
+name: Build EXE for Windows Server 2008 R2 -> 2022 (Win7 -> Win11)
+
+# Python 3.8.10 là bản cuối có bộ cài Windows và là dòng cuối hỗ trợ Windows 7 / Server 2008 R2.
+# EXE 64-bit build ra chạy được trên: Server 2008 R2 SP1, 2012, 2012 R2, 2016, 2019, 2022 (+ Win7 SP1 -> Win11).
 
 on:
   workflow_dispatch:
@@ -23,11 +26,30 @@ jobs:
           pip install pyinstaller==4.10
 
       - name: Build EXE
+        shell: pwsh
         run: |
-          pyinstaller --onefile --windowed --clean --name UPDATE_BIN_SERVICE Main.py
+          $pyiArgs = @('--onefile', '--windowed', '--clean', '--uac-admin', '--name', 'UPDATE_BIN_SERVICE')
+
+          # Đóng gói Universal CRT vào EXE -> Server 2008 R2 / Win7 không cần cài KB2999226
+          $redist = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Redist'
+          $ucrt = Get-ChildItem $redist -Recurse -Filter ucrtbase.dll -ErrorAction SilentlyContinue |
+                  Where-Object { $_.DirectoryName -match '\\ucrt\\DLLs\\x64$' } |
+                  Select-Object -First 1
+          if ($ucrt) {
+            Write-Host "Đóng gói UCRT từ: $($ucrt.DirectoryName)"
+            $pyiArgs += @('--add-binary', "$($ucrt.DirectoryName)\*.dll;.")
+          } else {
+            Write-Host "::warning::Không tìm thấy UCRT redist - máy 2008 R2 cần cài KB2999226"
+          }
+
+          pyinstaller @pyiArgs Main.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Smoke test (import module, không mở GUI)
+        run: python -c "import Main; print('import OK')"
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: UPDATE_BIN_SERVICE_WIN2008
+          name: UPDATE_BIN_SERVICE_WIN2008R2-2022
           path: dist/UPDATE_BIN_SERVICE.exe

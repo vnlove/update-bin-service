@@ -7,3 +7,7 @@ __pycache__/
 build/
 dist/
 *.spec
+
+# Sinh ra khi chạy tool
+logs/
+update_bin_config.json
