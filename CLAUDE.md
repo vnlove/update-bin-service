@@ -14,6 +14,10 @@ Công cụ GUI (Tkinter) cập nhật hàng loạt thư mục `bin` của các s
 - File sinh ra khi chạy (đã gitignore): `logs/update_bin_<thời gian>.log`, `update_bin_config.json`
   (nhớ bin_goc, danh sách thư mục gốc, tên bắt đầu) — nằm cạnh EXE; không ghi được thì log vào %TEMP%.
 
+## Nghiệp vụ
+- ACCService và WarehouseService dùng CHUNG một bộ bin → chạy chung 1 lần với cùng bin_goc (VD: `ACCService;WarehouseService`).
+- So khớp tên không phân biệt hoa thường → không cần nhập cả `WarehouseService` lẫn `Warehouseservice`.
+
 ## Luồng xử lý
 ```
 Chọn bin_goc + NHIỀU thư mục gốc + tên bắt đầu (nhiều tên, cách nhau ';')
